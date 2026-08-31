@@ -40,6 +40,14 @@ when adding new modules, always verify against this list to avoid bus collisions
 | **17**     | `I2S_DOUT` | Audio         | data out (to max98357a amplifier)       |
 | **18**     | `I2S_DIN`  | Audio         | data in (from inmp441 microphone)       |
 
+## User Input (Physical)
+
+| Pin (GPIO) | Name      | Target Module  | Description                                |
+| :--------- | :-------- | :------------- | :----------------------------------------- |
+| **39**     | `ENC_CLK` | Rotary Encoder | clock/phase A (needs interrupt)            |
+| **40**     | `ENC_DT`  | Rotary Encoder | data/phase B (direction check)             |
+| **41**     | `ENC_SW`  | Rotary Encoder | push button switch (active low, interrupt) |
+
 ## Power & Excluded Pins
 
 - **3V3 / GND:** primary logic power.

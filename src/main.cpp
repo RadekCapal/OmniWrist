@@ -1,6 +1,7 @@
 #include "BME280Card.h"
 #include "ClockCard.h"
 #include "DisplayManager.h"
+#include "EncoderManager.h"
 #include "MotionManager.h"
 #include "TimeManager.h"
 #include "UI_Card.h"
@@ -11,6 +12,8 @@
 
 DisplayManager display;
 MotionManager motion;
+EncoderManager encoder;
+;
 
 ClockCard clockCard;
 BME280Card bmeCard;
@@ -45,6 +48,7 @@ void setup() {
   Wire.begin(I2C_SDA, I2C_SCL);
   bmeCard.begin();
   motion.begin();
+  encoder.begin();
 
   Serial.println("==================================");
   Serial.println("Starting OmniWrist OS...");
@@ -68,16 +72,19 @@ void setup() {
 
 void loop() {
   // 1. handle hardware wake up signal
-  if (touchInterruptTriggered || imuInterruptTriggered) {
+  if (touchInterruptTriggered || imuInterruptTriggered ||
+      encoder.isWakeSignal()) {
+
     bool wasTouch = touchInterruptTriggered;
+    bool wasButton = encoder.isWakeSignal();
 
-    touchInterruptTriggered = false; // lower the flag
+    touchInterruptTriggered = false;
     imuInterruptTriggered = false;
-
     motion.clearInterrupt(); // turn off alarm in MPU6050
+    encoder.clearInterrupts();
 
     if (!display.isScreenAwake()) {
-      if (wasTouch || motion.isTiltedUp()) {
+      if (wasTouch || wasButton || motion.isTiltedUp()) {
         display.wakeUp();
         detachInterrupt(TOUCH_IRQ);
         detachInterrupt(IMU_INT);
@@ -97,13 +104,15 @@ void loop() {
   if (display.isScreenAwake()) {
     cards[currentCardIndex]->onUpdate(display.getTFT());
 
-    Gesture userAction = display.getGesture();
+    Gesture touchAction = display.getGesture();
+    EncoderEvent encAction = encoder.getEvent();
 
     // if user did something, reset the sleep timer
-    if (userAction != Gesture::none || display.isCurrentlyTouched()) {
+    if (touchAction != Gesture::none || encAction != EncoderEvent::NONE ||
+        display.isCurrentlyTouched()) {
       lastActivityTime = millis();
 
-      switch (userAction) {
+      switch (touchAction) {
       case Gesture::tap:
         Serial.println("Action: TAP");
         break;
@@ -125,6 +134,23 @@ void loop() {
         Serial.println("Action: SWIPE DOWN");
         break;
       case Gesture::none:
+        break;
+      }
+
+      switch (encAction) {
+      case EncoderEvent::CLICK:
+        Serial.println("Encoder: BUTTON CLICK");
+        switchCard(0); // to default card - time
+        break;
+      case EncoderEvent::RIGHT:
+        Serial.println("Encoder: ROTATE RIGHT");
+        switchCard((currentCardIndex + 1) %
+                   NUM_CARDS); // next card - life swipe left
+        break;
+      case EncoderEvent::LEFT:
+        Serial.println("Encoder: ROTATE LEFT");
+        switchCard((currentCardIndex - 1 + NUM_CARDS) %
+                   NUM_CARDS); // previous card
         break;
       }
     }
