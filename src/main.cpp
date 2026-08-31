@@ -1,7 +1,18 @@
 #include "DisplayManager.h"
+#include "esp32-hal-gpio.h"
 #include <Arduino.h>
 
 DisplayManager display;
+
+// variables for power management
+volatile bool touchInterruptTriggered =
+    false; // volatile tells compiler this changes outside main thread
+uint32_t lastActivityTime = 0;
+const uint32_t SLEEP_TIMEOUT =
+    5000; // time in ms before screen goes to sleep (5 seconds)
+
+// hardware interrupt routine (must be in ram for speed)
+void IRAM_ATTR touchWakeISR() { touchInterruptTriggered = true; }
 
 void setup() {
   Serial.begin(115200);
@@ -13,44 +24,70 @@ void setup() {
 
   display.begin();
   display.drawBootScreen();
+
+  // setup the interrupt  pin
+  pinMode(TOUCH_IRQ, INPUT_PULLUP);
+
+  lastActivityTime = millis();
 }
 
 void loop() {
-  // get user input
-  Gesture userAction = display.getGesture();
-  uint16_t x = 0;
-  uint16_t y = 0;
+  // 1. handle hardware wake up signal
+  if (touchInterruptTriggered) {
+    touchInterruptTriggered = false; // lower the flag
 
-  // handle the action
-  switch (userAction) {
-  case Gesture::tap:
-    Serial.println("Action : TAP - opening card details");
-    break;
-  case Gesture::hold:
-    Serial.println("Action : HOLD - something");
-    break;
-  case Gesture::swipe_left:
-    Serial.println("Action : SWIPE LEFT - moving to next sensor card");
-    break;
-  case Gesture::swipe_right:
-    Serial.println("Action : SWIPE RIGHT - moving to previous sensor card");
-    break;
-  case Gesture::swipe_up:
-    Serial.println("Action : SWIPE UP - scrolling content up");
-    break;
-  case Gesture::swipe_down:
-    Serial.println("Action : SWIPE DOWN - scrolling content down");
-    break;
-  case Gesture::none:
-    // do nothing
-    break;
+    if (!display.isScreenAwake()) {
+      display.wakeUp();
+      detachInterrupt(TOUCH_IRQ);
+
+      lastActivityTime = millis();
+      Serial.println("System Woken Up by Touch Interrupt!");
+      delay(50);
+      return;
+    }
   }
 
-  // check if the screen is currently being pressed
-  // if (display.getTouch(x, y)) {
-  // Serial.printf("Touch detected - X: %d, Y: %d\n", x, y);
-  // display.drawTouchPoint(x, y);
-  //}
+  // 2. process ui only if screen is active
+  if (display.isScreenAwake()) {
+    Gesture userAction = display.getGesture();
+
+    // if user did something, reset the sleep timer
+    if (userAction != Gesture::none || display.isCurrentlyTouched()) {
+      lastActivityTime = millis();
+
+      switch (userAction) {
+      case Gesture::tap:
+        Serial.println("Action: TAP");
+        break;
+      case Gesture::hold:
+        Serial.println("Action: HOLD");
+        break;
+      case Gesture::swipe_left:
+        Serial.println("Action: SWIPE LEFT");
+        break;
+      case Gesture::swipe_right:
+        Serial.println("Action: SWIPE RIGHT");
+        break;
+      case Gesture::swipe_up:
+        Serial.println("Action: SWIPE UP");
+        break;
+      case Gesture::swipe_down:
+        Serial.println("Action: SWIPE DOWN");
+        break;
+      case Gesture::none:
+        break;
+      }
+    }
+
+    // 3. check if it is time to sleep
+    if (millis() - lastActivityTime > SLEEP_TIMEOUT) {
+      Serial.println("Going to sleep to save power...");
+      display.sleep();
+
+      touchInterruptTriggered = false;
+      attachInterrupt(TOUCH_IRQ, touchWakeISR, FALLING);
+    }
+  }
 
   // small delay to let the cpu breathe
   delay(10);

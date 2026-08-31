@@ -1,4 +1,5 @@
 #include "DisplayManager.h"
+#include "esp32-hal-gpio.h"
 #include "esp32-hal.h"
 
 DisplayManager::DisplayManager() : tft(TFT_eSPI()) {}
@@ -101,3 +102,19 @@ Gesture DisplayManager::getGesture() {
   // case 3: no touch detected, nothing happening
   return Gesture::none;
 }
+
+void DisplayManager::sleep() {
+  // turn off backlight
+  digitalWrite(TFT_BL, LOW);
+  _isAwake = false;
+}
+
+void DisplayManager::wakeUp() {
+  // turn on backlight
+  digitalWrite(TFT_BL, HIGH);
+  _isAwake = true;
+}
+
+bool DisplayManager::isScreenAwake() { return _isAwake; }
+
+bool DisplayManager::isCurrentlyTouched() { return wasTouched; }

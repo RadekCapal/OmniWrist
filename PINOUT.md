@@ -24,11 +24,12 @@ when adding new modules, always verify against this list to avoid bus collisions
 
 ## Display Specific
 
-| Pin (GPIO) | Name      | Target Module | Description                                |
-| :--------- | :-------- | :------------ | :----------------------------------------- |
-| **9**      | `TFT_DC`  | Display       | data/command toggle                        |
-| **14**     | `TFT_RST` | Display       | hardware reset                             |
-| **21**     | `TFT_BL`  | Display       | backlight control (use pwm for brightness) |
+| Pin (GPIO) | Name        | Target Module | Description                                       |
+| :--------- | :---------- | :------------ | :------------------------------------------------ |
+| **9**      | `TFT_DC`    | Display       | data/command toggle                               |
+| **14**     | `TFT_RST`   | Display       | hardware reset                                    |
+| **21**     | `TFT_BL`    | Display       | backlight control (use pwm for brightness)        |
+| **2**      | `TOUCH_IRQ` | Touch         | hardware interrupt from touch screen (active low) |
 
 ## I2S Audio System (Proposed)
 

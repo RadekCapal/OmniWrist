@@ -30,6 +30,8 @@ private:
       30;                           // minimum pixels to be considered a swipe
   const uint32_t TAP_TIMEOUT = 300; // max miliseconds for a quick tap
 
+  bool _isAwake = true;
+
 public:
   DisplayManager();
 
@@ -43,6 +45,11 @@ public:
   void drawTouchPoint(uint16_t x, uint16_t y);
 
   Gesture getGesture();
+
+  void sleep();
+  void wakeUp();
+  bool isScreenAwake();
+  bool isCurrentlyTouched();
 };
 
 #endif // DISPLAY_MANAGER_H
