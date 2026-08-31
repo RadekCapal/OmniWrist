@@ -1,3 +1,4 @@
+#include "BME280Card.h"
 #include "ClockCard.h"
 #include "DisplayManager.h"
 #include "TimeManager.h"
@@ -5,10 +6,16 @@
 #include "esp32-hal-gpio.h"
 #include "secrets.h"
 #include <Arduino.h>
+#include <Wire.h>
 
 DisplayManager display;
+
 ClockCard clockCard;
-UI_Card *activeCard = nullptr;
+BME280Card bmeCard;
+
+UI_Card *cards[] = {&clockCard, &bmeCard};
+const int NUM_CARDS = 2;
+int currentCardIndex = 0;
 
 // variables for power management
 volatile bool touchInterruptTriggered =
@@ -20,9 +27,19 @@ const uint32_t SLEEP_TIMEOUT =
 // hardware interrupt routine (must be in ram for speed)
 void IRAM_ATTR touchWakeISR() { touchInterruptTriggered = true; }
 
+void switchCard(int newIndex) {
+  cards[currentCardIndex]->onHide();
+  currentCardIndex = newIndex;
+  cards[currentCardIndex]->onShow(display.getTFT());
+}
+
 void setup() {
   Serial.begin(115200);
   delay(2000);
+
+  // initialize i2c bus
+  Wire.begin(I2C_SDA, I2C_SCL);
+  bmeCard.begin();
 
   Serial.println("==================================");
   Serial.println("Starting OmniWrist OS...");
@@ -34,9 +51,8 @@ void setup() {
   // sync time
   TimeManager::syncTime(WIFI_SSID, WIFI_PASS);
 
-  // set initial UI card
-  activeCard = &clockCard;
-  activeCard->onShow(display.getTFT());
+  // show the first card
+  cards[currentCardIndex]->onShow(display.getTFT());
 
   // setup the interrupt  pin
   pinMode(TOUCH_IRQ, INPUT_PULLUP);
@@ -57,8 +73,7 @@ void loop() {
       Serial.println("System Woken Up by Touch Interrupt!");
 
       // force full redraw of the card when waking up
-      if (activeCard)
-        activeCard->onShow(display.getTFT());
+      cards[currentCardIndex]->onShow(display.getTFT());
       delay(50);
       return;
     }
@@ -66,10 +81,7 @@ void loop() {
 
   // 2. process ui only if screen is active
   if (display.isScreenAwake()) {
-    // update the dynamic content of the active card
-    if (activeCard) {
-      activeCard->onUpdate(display.getTFT());
-    }
+    cards[currentCardIndex]->onUpdate(display.getTFT());
 
     Gesture userAction = display.getGesture();
 
@@ -86,9 +98,11 @@ void loop() {
         break;
       case Gesture::swipe_left:
         Serial.println("Action: SWIPE LEFT");
+        switchCard((currentCardIndex + 1) % NUM_CARDS);
         break;
       case Gesture::swipe_right:
         Serial.println("Action: SWIPE RIGHT");
+        switchCard((currentCardIndex - 1 + NUM_CARDS) % NUM_CARDS);
         break;
       case Gesture::swipe_up:
         Serial.println("Action: SWIPE UP");
