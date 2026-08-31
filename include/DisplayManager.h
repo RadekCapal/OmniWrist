@@ -40,6 +40,9 @@ private:
 public:
   DisplayManager();
 
+  // returns pointer to the tft object so UI cards can draw on it
+  TFT_eSPI *getTFT() { return &tft; }
+
   void begin();
   void drawBootScreen();
 

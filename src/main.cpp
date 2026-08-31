@@ -1,15 +1,21 @@
+#include "ClockCard.h"
 #include "DisplayManager.h"
+#include "TimeManager.h"
+#include "UI_Card.h"
 #include "esp32-hal-gpio.h"
+#include "secrets.h"
 #include <Arduino.h>
 
 DisplayManager display;
+ClockCard clockCard;
+UI_Card *activeCard = nullptr;
 
 // variables for power management
 volatile bool touchInterruptTriggered =
     false; // volatile tells compiler this changes outside main thread
 uint32_t lastActivityTime = 0;
 const uint32_t SLEEP_TIMEOUT =
-    5000; // time in ms before screen goes to sleep (5 seconds)
+    10000; // time in ms before screen goes to sleep (10 seconds)
 
 // hardware interrupt routine (must be in ram for speed)
 void IRAM_ATTR touchWakeISR() { touchInterruptTriggered = true; }
@@ -24,6 +30,13 @@ void setup() {
 
   display.begin();
   display.drawBootScreen();
+
+  // sync time
+  TimeManager::syncTime(WIFI_SSID, WIFI_PASS);
+
+  // set initial UI card
+  activeCard = &clockCard;
+  activeCard->onShow(display.getTFT());
 
   // setup the interrupt  pin
   pinMode(TOUCH_IRQ, INPUT_PULLUP);
@@ -42,6 +55,10 @@ void loop() {
 
       lastActivityTime = millis();
       Serial.println("System Woken Up by Touch Interrupt!");
+
+      // force full redraw of the card when waking up
+      if (activeCard)
+        activeCard->onShow(display.getTFT());
       delay(50);
       return;
     }
@@ -49,6 +66,11 @@ void loop() {
 
   // 2. process ui only if screen is active
   if (display.isScreenAwake()) {
+    // update the dynamic content of the active card
+    if (activeCard) {
+      activeCard->onUpdate(display.getTFT());
+    }
+
     Gesture userAction = display.getGesture();
 
     // if user did something, reset the sleep timer
