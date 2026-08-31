@@ -1,6 +1,7 @@
 #include "BME280Card.h"
 #include "ClockCard.h"
 #include "DisplayManager.h"
+#include "MotionManager.h"
 #include "TimeManager.h"
 #include "UI_Card.h"
 #include "esp32-hal-gpio.h"
@@ -9,6 +10,7 @@
 #include <Wire.h>
 
 DisplayManager display;
+MotionManager motion;
 
 ClockCard clockCard;
 BME280Card bmeCard;
@@ -18,14 +20,16 @@ const int NUM_CARDS = 2;
 int currentCardIndex = 0;
 
 // variables for power management
-volatile bool touchInterruptTriggered =
-    false; // volatile tells compiler this changes outside main thread
+volatile bool touchInterruptTriggered = false;
+volatile bool imuInterruptTriggered = false;
+
 uint32_t lastActivityTime = 0;
 const uint32_t SLEEP_TIMEOUT =
     10000; // time in ms before screen goes to sleep (10 seconds)
 
 // hardware interrupt routine (must be in ram for speed)
 void IRAM_ATTR touchWakeISR() { touchInterruptTriggered = true; }
+void IRAM_ATTR imuWakeISR() { imuInterruptTriggered = true; }
 
 void switchCard(int newIndex) {
   cards[currentCardIndex]->onHide();
@@ -40,6 +44,7 @@ void setup() {
   // initialize i2c bus
   Wire.begin(I2C_SDA, I2C_SCL);
   bmeCard.begin();
+  motion.begin();
 
   Serial.println("==================================");
   Serial.println("Starting OmniWrist OS...");
@@ -56,26 +61,35 @@ void setup() {
 
   // setup the interrupt  pin
   pinMode(TOUCH_IRQ, INPUT_PULLUP);
+  pinMode(IMU_INT, INPUT_PULLUP);
 
   lastActivityTime = millis();
 }
 
 void loop() {
   // 1. handle hardware wake up signal
-  if (touchInterruptTriggered) {
+  if (touchInterruptTriggered || imuInterruptTriggered) {
+    bool wasTouch = touchInterruptTriggered;
+
     touchInterruptTriggered = false; // lower the flag
+    imuInterruptTriggered = false;
+
+    motion.clearInterrupt(); // turn off alarm in MPU6050
 
     if (!display.isScreenAwake()) {
-      display.wakeUp();
-      detachInterrupt(TOUCH_IRQ);
+      if (wasTouch || motion.isTiltedUp()) {
+        display.wakeUp();
+        detachInterrupt(TOUCH_IRQ);
+        detachInterrupt(IMU_INT);
 
-      lastActivityTime = millis();
-      Serial.println("System Woken Up by Touch Interrupt!");
+        lastActivityTime = millis();
+        Serial.println("System Woken Up by Interrupt!");
 
-      // force full redraw of the card when waking up
-      cards[currentCardIndex]->onShow(display.getTFT());
-      delay(50);
-      return;
+        // force full redraw of the card when waking up
+        cards[currentCardIndex]->onShow(display.getTFT());
+        delay(50);
+        return;
+      }
     }
   }
 
@@ -121,7 +135,10 @@ void loop() {
       display.sleep();
 
       touchInterruptTriggered = false;
+      imuInterruptTriggered = false;
+      motion.clearInterrupt(); // clean old motion
       attachInterrupt(TOUCH_IRQ, touchWakeISR, FALLING);
+      attachInterrupt(IMU_INT, imuWakeISR, FALLING);
     }
   }
 
