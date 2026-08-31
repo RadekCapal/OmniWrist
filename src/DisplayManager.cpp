@@ -52,54 +52,75 @@ void DisplayManager::drawTouchPoint(uint16_t x, uint16_t y) {
 
 Gesture DisplayManager::getGesture() {
   uint16_t currentX = 0, currentY = 0;
-  bool isTouched = tft.getTouch(&currentX, &currentY);
 
-  // case 1: finger is currently on the screen
-  if (isTouched) {
+  // read hardware state
+  bool isPhysicallyTouched = tft.getTouch(&currentX, &currentY);
+
+  if (isPhysicallyTouched) {
+    // draw tracking dots only if we are not ignoring this touch
+    if (!_ignoreNextGesture) {
+      tft.fillCircle(currentX, currentY, 2, TFT_RED);
+    }
+
+    lastTouchTime = millis(); // keep pushing the debounce timer forward
+
     if (!wasTouched) {
       startX = currentX;
       startY = currentY;
       startTime = millis();
       wasTouched = true;
     }
-    // continuously update the last known position
     lastX = currentX;
     lastY = currentY;
 
-    return Gesture::none; // gesture is not finished yet
+    return Gesture::none;
   }
 
-  // case 2: finger was just released from the screen
-  if (!isTouched && wasTouched) {
-    wasTouched = false; // reset state
-    int16_t dx = lastX - startX;
-    int16_t dy = lastY - startY;
-    uint32_t duration = millis() - startTime;
+  // touch was lost, but we are in "wasTouched" state
+  if (!isPhysicallyTouched && wasTouched) {
 
-    // check if movement was too small to be a swipe
-    if (abs(dx) < SWIPE_THRESHOLD && abs(dy) < SWIPE_THRESHOLD) {
-      if (duration < TAP_TIMEOUT) {
-        return Gesture::tap;
+    // DEBOUNCE CHECK: Has the finger been off the screen long enough?
+    if (millis() - lastTouchTime > TOUCH_DEBOUNCE_MS) {
+      wasTouched = false; // definitively end the touch
+
+      int16_t dx = lastX - startX;
+      int16_t dy = lastY - startY;
+
+      // use lastTouchTime instead of millis() for accurate duration without
+      // debounce delay
+      uint32_t duration = lastTouchTime - startTime;
+
+      Gesture detectedGesture = Gesture::none;
+
+      // 1. evaluate the gesture
+      if (abs(dx) < SWIPE_THRESHOLD && abs(dy) < SWIPE_THRESHOLD) {
+        if (duration < TAP_TIMEOUT) {
+          detectedGesture = Gesture::tap;
+        } else {
+          detectedGesture = Gesture::hold;
+        }
+      } else if (abs(dx) > abs(dy)) {
+        if (dx > 0)
+          detectedGesture = Gesture::swipe_right;
+        else
+          detectedGesture = Gesture::swipe_left;
+      } else {
+        if (dy > 0)
+          detectedGesture = Gesture::swipe_down;
+        else
+          detectedGesture = Gesture::swipe_up;
       }
-      return Gesture::hold; // touch was too long for a tap, but too short for a
-                            // swipe => hold
-    }
-    // if movement was significat, determine the primary axis
-    if (abs(dx) > abs(dy)) {
-      // horizontal movement is dominant
-      if (dx > 0)
-        return Gesture::swipe_right;
-      else
-        return Gesture::swipe_left;
-    } else {
-      // vertical movement is dominant
-      if (dy > 0)
-        return Gesture::swipe_down;
-      else
-        return Gesture::swipe_up;
+
+      // 2. swallow the gesture if it was the wake-up touch
+      if (_ignoreNextGesture) {
+        _ignoreNextGesture = false; // reset the flag
+        return Gesture::none;       // pretend nothing happened
+      }
+
+      return detectedGesture;
     }
   }
-  // case 3: no touch detected, nothing happening
+
   return Gesture::none;
 }
 
@@ -113,6 +134,7 @@ void DisplayManager::wakeUp() {
   // turn on backlight
   digitalWrite(TFT_BL, HIGH);
   _isAwake = true;
+  _ignoreNextGesture = true; // for touch that wake OS up
 }
 
 bool DisplayManager::isScreenAwake() { return _isAwake; }

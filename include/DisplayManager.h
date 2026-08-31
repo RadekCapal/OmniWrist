@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <TFT_eSPI.h>
+#include <cstdint>
 
 enum class Gesture {
   none,
@@ -19,6 +20,7 @@ private:
   TFT_eSPI tft;
   // array to store calibration data for the touch screen
   uint16_t calData[5];
+  bool _isAwake = true;
 
   // variables for gesture detection
   bool wasTouched = false;
@@ -26,11 +28,14 @@ private:
   uint16_t lastX = 0, lastY = 0;
   uint32_t startTime = 0;
 
+  // debounce and wake up
+  uint32_t lastTouchTime = 0;
+  bool _ignoreNextGesture = false;
+  const uint16_t TOUCH_DEBOUNCE_MS = 50;
+
   const uint16_t SWIPE_THRESHOLD =
       30;                           // minimum pixels to be considered a swipe
   const uint32_t TAP_TIMEOUT = 300; // max miliseconds for a quick tap
-
-  bool _isAwake = true;
 
 public:
   DisplayManager();
