@@ -8,8 +8,8 @@ void MotionManager::begin() {
 
   // sensitivity setting for motion detection
   mpu.setHighPassFilter(MPU6050_HIGHPASS_0_63_HZ);
-  mpu.setMotionDetectionThreshold(2); // motion sensitivity (1-5)
-  mpu.setMotionDetectionDuration(10); // how long does the motion have to be
+  mpu.setMotionDetectionThreshold(4);  // motion sensitivity (1-5)
+  mpu.setMotionDetectionDuration(100); // how long does the motion have to be
 
   // INT pin setup to work like touch screen (active in LOW)
   mpu.setInterruptPinPolarity(true); // true = Active LOW
