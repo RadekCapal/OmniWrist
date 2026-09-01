@@ -1,4 +1,5 @@
 #include "BME280Card.h"
+#include "BacklightManager.h"
 #include "ClockCard.h"
 #include "DisplayManager.h"
 #include "EncoderManager.h"
@@ -16,6 +17,7 @@
 DisplayManager display;
 MotionManager motion;
 EncoderManager encoder;
+BacklightManager backlight;
 
 ClockCard clockCard;
 BME280Card bmeCard;
@@ -56,6 +58,7 @@ void setup() {
   motion.begin();
   encoder.begin();
   heartCard.begin();
+  backlight.begin();
 
   Serial.println("==================================");
   Serial.println("Starting OmniWrist OS...");
@@ -93,6 +96,9 @@ void loop() {
     if (!display.isScreenAwake()) {
       if (wasTouch || wasButton || motion.isTiltedUp()) {
         display.wakeUp();
+
+        backlight.wakeUp();
+
         detachInterrupt(TOUCH_IRQ);
         detachInterrupt(IMU_INT);
 
@@ -110,6 +116,7 @@ void loop() {
   // 2. process ui only if screen is active
   if (display.isScreenAwake()) {
     motion.update();
+    backlight.update();
 
     cards[currentCardIndex]->onUpdate(display.getTFT());
 
@@ -168,6 +175,8 @@ void loop() {
     if (millis() - lastActivityTime > SLEEP_TIMEOUT) {
       if (!cards[currentCardIndex]->blocksSleep()) {
         Serial.println("Going to sleep to save power...");
+
+        backlight.sleep();
         display.sleep();
 
         touchInterruptTriggered = false;
