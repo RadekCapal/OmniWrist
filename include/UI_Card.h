@@ -23,6 +23,10 @@ public:
   virtual void onHide() {
     // default empty implementation. cards can override this if they need to.
   }
+
+  // returns true if the card is doing something important and should not be put
+  // to sleep
+  virtual bool blocksSleep() { return false; }
 };
 
 #endif // UI_CARD_H

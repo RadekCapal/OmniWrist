@@ -2,10 +2,13 @@
 #include "ClockCard.h"
 #include "DisplayManager.h"
 #include "EncoderManager.h"
+#include "HeartRateCard.h"
 #include "MotionManager.h"
+#include "PedometerCard.h"
 #include "TimeManager.h"
 #include "UI_Card.h"
 #include "esp32-hal-gpio.h"
+#include "esp32-hal.h"
 #include "secrets.h"
 #include <Arduino.h>
 #include <Wire.h>
@@ -13,13 +16,14 @@
 DisplayManager display;
 MotionManager motion;
 EncoderManager encoder;
-;
 
 ClockCard clockCard;
 BME280Card bmeCard;
+HeartRateCard heartCard;
+PedometerCard stepCard;
 
-UI_Card *cards[] = {&clockCard, &bmeCard};
-const int NUM_CARDS = 2;
+UI_Card *cards[] = {&clockCard, &bmeCard, &heartCard, &stepCard};
+const int NUM_CARDS = 4;
 int currentCardIndex = 0;
 
 // variables for power management
@@ -46,9 +50,12 @@ void setup() {
 
   // initialize i2c bus
   Wire.begin(I2C_SDA, I2C_SCL);
+  delay(100);
+
   bmeCard.begin();
   motion.begin();
   encoder.begin();
+  heartCard.begin();
 
   Serial.println("==================================");
   Serial.println("Starting OmniWrist OS...");
@@ -102,6 +109,8 @@ void loop() {
 
   // 2. process ui only if screen is active
   if (display.isScreenAwake()) {
+    motion.update();
+
     cards[currentCardIndex]->onUpdate(display.getTFT());
 
     Gesture touchAction = display.getGesture();
@@ -157,14 +166,19 @@ void loop() {
 
     // 3. check if it is time to sleep
     if (millis() - lastActivityTime > SLEEP_TIMEOUT) {
-      Serial.println("Going to sleep to save power...");
-      display.sleep();
+      if (!cards[currentCardIndex]->blocksSleep()) {
+        Serial.println("Going to sleep to save power...");
+        display.sleep();
 
-      touchInterruptTriggered = false;
-      imuInterruptTriggered = false;
-      motion.clearInterrupt(); // clean old motion
-      attachInterrupt(TOUCH_IRQ, touchWakeISR, FALLING);
-      attachInterrupt(IMU_INT, imuWakeISR, FALLING);
+        touchInterruptTriggered = false;
+        imuInterruptTriggered = false;
+        motion.clearInterrupt(); // clean old motion
+
+        attachInterrupt(TOUCH_IRQ, touchWakeISR, FALLING);
+        attachInterrupt(IMU_INT, imuWakeISR, FALLING);
+      } else {
+        lastActivityTime = millis();
+      }
     }
   }
 
