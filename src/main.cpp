@@ -5,6 +5,7 @@
 #include "EncoderManager.h"
 #include "HeartRateCard.h"
 #include "MotionManager.h"
+#include "NotificationManager.h"
 #include "PedometerCard.h"
 #include "TimeManager.h"
 #include "UI_Card.h"
@@ -76,6 +77,8 @@ void setup() {
   // setup the interrupt  pin
   pinMode(TOUCH_IRQ, INPUT_PULLUP);
   pinMode(IMU_INT, INPUT_PULLUP);
+
+  NotificationManager::init();
 
   lastActivityTime = millis();
 }
@@ -172,23 +175,23 @@ void loop() {
     }
 
     // 3. check if it is time to sleep
-    if (millis() - lastActivityTime > SLEEP_TIMEOUT) {
-      if (!cards[currentCardIndex]->blocksSleep()) {
-        Serial.println("Going to sleep to save power...");
+    // if (millis() - lastActivityTime > SLEEP_TIMEOUT) {
+    // if (!cards[currentCardIndex]->blocksSleep()) {
+    // Serial.println("Going to sleep to save power...");
 
-        backlight.sleep();
-        display.sleep();
+    // backlight.sleep();
+    // display.sleep();
 
-        touchInterruptTriggered = false;
-        imuInterruptTriggered = false;
-        motion.clearInterrupt(); // clean old motion
+    // touchInterruptTriggered = false;
+    // imuInterruptTriggered = false;
+    // motion.clearInterrupt(); // clean old motion
 
-        attachInterrupt(TOUCH_IRQ, touchWakeISR, FALLING);
-        attachInterrupt(IMU_INT, imuWakeISR, FALLING);
-      } else {
-        lastActivityTime = millis();
-      }
-    }
+    // attachInterrupt(TOUCH_IRQ, touchWakeISR, FALLING);
+    // attachInterrupt(IMU_INT, imuWakeISR, FALLING);
+    //} else {
+    // lastActivityTime = millis();
+    //}
+    //}
   }
 
   // small delay to let the cpu breathe
