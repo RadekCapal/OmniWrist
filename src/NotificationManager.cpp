@@ -1,49 +1,157 @@
 #include "NotificationManager.h"
 #include <NimBLEDevice.h>
+#include <vector>
 
-// Official Apple ANCS Service UUID
+#define MAX_HISTORY 10
+static std::vector<NotificationData> notificationHistory;
+
+// Apple ANCS Service Base
 static NimBLEUUID ancsServiceUUID("7905f431-b5ce-4e99-a40f-4b1e122d00d0");
 
-// Flags for inter-task communication
+// Flags and Globals
 static volatile bool isConnected = false;
 static volatile bool isAuthenticated = false;
 static uint16_t currentConnHandle = 0;
 static NimBLEServer *pGlobalServer = nullptr;
+static NimBLERemoteCharacteristic *pControlPoint = nullptr;
 
-// 1. Process incoming iOS notifications
+// Buffer for text parsing
+static std::vector<uint8_t> dataBuffer;
+static String currentTitle = "";
+static String currentMessage = "";
+
+// --- Bezpečná schránka pro hlavní vlákno ---
+static NotificationData pendingNotification;
+static volatile bool isNewNotificationReady = false;
+
+// =========================================================================
+// 1. MAILBOX DELIVERY
+// =========================================================================
+void displayNotificationOnScreen(String title, String message) {
+  pendingNotification.title = title;
+  pendingNotification.message = message;
+  isNewNotificationReady = true;
+
+  notificationHistory.insert(notificationHistory.begin(), {title, message});
+
+  if (notificationHistory.size() > MAX_HISTORY) {
+    notificationHistory.pop_back();
+  }
+}
+
+bool NotificationManager::hasNewNotification() {
+  return isNewNotificationReady;
+}
+
+NotificationData NotificationManager::getNotification() {
+  isNewNotificationReady = false;
+  return pendingNotification;
+}
+
+// =========================================================================
+// 2. DATA SOURCE CALLBACK
+// =========================================================================
+void dataSourceCallback(NimBLERemoteCharacteristic *pChar, uint8_t *pData,
+                        size_t length, bool isNotify) {
+  Serial.print("📥 Data Source received chunk of ");
+  Serial.print(length);
+  Serial.println(" bytes.");
+
+  for (size_t i = 0; i < length; i++) {
+    dataBuffer.push_back(pData[i]);
+  }
+
+  if (dataBuffer.size() >= 5) {
+    uint8_t commandId = dataBuffer[0];
+    if (commandId != 0) {
+      dataBuffer.clear();
+      return;
+    }
+
+    int index = 5;
+    bool parsingComplete = true;
+
+    currentTitle = "Unknown";
+    currentMessage = "";
+
+    // Explicit cast to int to avoid vector size comparison warnings
+    while (index + 3 <= (int)dataBuffer.size()) {
+      uint8_t attrID = dataBuffer[index];
+      uint16_t attrLen = dataBuffer[index + 1] | (dataBuffer[index + 2] << 8);
+
+      if (index + 3 + attrLen <= (int)dataBuffer.size()) {
+        String text = "";
+        for (int i = 0; i < attrLen; i++) {
+          text += (char)dataBuffer[index + 3 + i];
+        }
+
+        if (attrID == 1)
+          currentTitle = text;
+        if (attrID == 3)
+          currentMessage = text;
+
+        index += 3 + attrLen;
+      } else {
+        parsingComplete = false;
+        break;
+      }
+    }
+
+    if (parsingComplete && index >= (int)dataBuffer.size()) {
+      displayNotificationOnScreen(currentTitle, currentMessage);
+      dataBuffer.clear();
+    }
+  }
+}
+
+// =========================================================================
+// 3. MICRO-TASK TO REQUEST TEXT
+// =========================================================================
+void requestTextTask(void *parameter) {
+  uint32_t uid = (uint32_t)(uintptr_t)parameter;
+
+  uint8_t command[11] = {0x00,
+                         (uint8_t)(uid & 0xFF),
+                         (uint8_t)((uid >> 8) & 0xFF),
+                         (uint8_t)((uid >> 16) & 0xFF),
+                         (uint8_t)((uid >> 24) & 0xFF),
+                         0x01,
+                         0x40,
+                         0x00,
+                         0x03,
+                         0xFF,
+                         0x00};
+
+  if (pControlPoint) {
+    pControlPoint->writeValue(command, sizeof(command), true);
+  }
+
+  vTaskDelete(NULL);
+}
+
+// =========================================================================
+// 4. NOTIFICATION SOURCE CALLBACK
+// =========================================================================
 void notificationCallback(NimBLERemoteCharacteristic *pChar, uint8_t *pData,
                           size_t length, bool isNotify) {
   if (length < 8)
     return;
 
-  uint8_t eventId = pData[0];    // 0 = Added
-  uint8_t categoryId = pData[2]; // App category
+  uint8_t eventId = pData[0];
 
-  if (eventId == 0) {
-    Serial.println("=================================");
-    Serial.print("🔔 NEW NOTIFICATION! Category: ");
-    switch (categoryId) {
-    case 1:
-      Serial.println("📞 Incoming call!");
-      break;
-    case 2:
-      Serial.println("📵 Missed call!");
-      break;
-    case 4:
-      Serial.println("💬 Message (Messenger, WhatsApp, SMS)!");
-      break;
-    case 6:
-      Serial.println("📧 E-mail!");
-      break;
-    default:
-      Serial.println("📱 Other (Calendar, Timer, etc.)");
-      break;
-    }
-    Serial.println("=================================");
+  if (eventId == 0 && pControlPoint != nullptr) {
+    Serial.println("🔔 Notification ping! Spawning task to request text...");
+    uint32_t uid =
+        pData[4] | (pData[5] << 8) | (pData[6] << 16) | (pData[7] << 24);
+    dataBuffer.clear();
+    xTaskCreate(requestTextTask, "ReqText", 2048, (void *)(uintptr_t)uid, 1,
+                NULL);
   }
 }
 
-// 2. Independent task to handle pairing and connecting to ANCS
+// =========================================================================
+// 5. CONNECTION TASK
+// =========================================================================
 void ancsClientTask(void *parameter) {
   vTaskDelay(500 / portTICK_PERIOD_MS);
   if (!isConnected) {
@@ -83,38 +191,32 @@ void ancsClientTask(void *parameter) {
     NimBLERemoteService *pService = pClient->getService(ancsServiceUUID);
 
     if (pService != nullptr) {
-      Serial.println("✅ Service found! Hunting for Notification Channel...");
+      Serial.println("✅ Service found! Hunting for all 3 Apple channels...");
 
       auto chars = pService->getCharacteristics(true);
-      NimBLERemoteCharacteristic *pTargetChar = nullptr;
+      NimBLERemoteCharacteristic *pNotifSource = nullptr;
+      NimBLERemoteCharacteristic *pDataSource = nullptr;
+      pControlPoint = nullptr;
 
-      // SMART SEARCH: Find the characteristic that starts with Apple's base
-      // UUID
       for (auto pCh : chars) {
         String uuidStr = pCh->getUUID().toString().c_str();
-        if (uuidStr.indexOf("9fbf120d") != -1) {
-          pTargetChar = pCh;
-          break;
-        }
+        if (uuidStr.indexOf("9fbf120d") != -1)
+          pNotifSource = pCh;
+        if (uuidStr.indexOf("22eac6e9") != -1)
+          pDataSource = pCh;
+        if (uuidStr.indexOf("69d1d8f3") != -1)
+          pControlPoint = pCh;
       }
 
-      if (pTargetChar != nullptr) {
-        Serial.println("✅ Characteristic matched! Subscribing...");
-
-        if (pTargetChar->canNotify()) {
-          if (pTargetChar->subscribe(true, notificationCallback)) {
-            Serial.println(
-                "✅ SUCCESS! Watch is now capturing iOS notifications.");
-          } else {
-            Serial.println(
-                "❌ Error: Subscribe function failed (iOS rejected).");
-          }
-        } else {
-          Serial.println("❌ Error: Characteristic exists but cannot notify.");
-        }
+      if (pNotifSource && pDataSource && pControlPoint) {
+        Serial.println("✅ All 3 channels found! Subscribing...");
+        pDataSource->subscribe(true, dataSourceCallback);
+        pNotifSource->subscribe(true, notificationCallback);
+        Serial.println("✅ SUCCESS! Watch is now FULLY capturing and reading "
+                       "iOS notifications.");
       } else {
         Serial.println(
-            "❌ Error: Notification Characteristic not found dynamically.");
+            "❌ Error: Missing one or more required ANCS characteristics.");
       }
     } else {
       Serial.println("❌ Error: ANCS service not found.");
@@ -126,14 +228,15 @@ void ancsClientTask(void *parameter) {
   vTaskDelete(NULL);
 }
 
-// 3. Callbacks to handle connection state
+// =========================================================================
+// 6. BLE SERVER CALLBACKS & INIT
+// =========================================================================
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo) override {
     Serial.println("\n✅ iPhone connected!");
     isConnected = true;
     isAuthenticated = false;
     currentConnHandle = connInfo.getConnHandle();
-
     xTaskCreate(ancsClientTask, "ANCS_Task", 4096, NULL, 1, NULL);
   }
 
@@ -152,7 +255,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 };
 
 void NotificationManager::init() {
-  Serial.println("Initializing clean NimBLE with ANCS...");
+  Serial.println("Initializing clean NimBLE with ANCS FULL TEXT...");
 
   NimBLEDevice::init("OmniWrist");
   NimBLEDevice::setMTU(512);
@@ -167,4 +270,15 @@ void NotificationManager::init() {
   pAdvertising->start();
 
   Serial.println("BLE started! Go to LightBlue and connect.");
+}
+
+int NotificationManager::getHistoryCount() {
+  return notificationHistory.size();
+}
+
+NotificationData NotificationManager::getHistoryItem(int index) {
+  if (index >= 0 && index < notificationHistory.size()) {
+    return notificationHistory[index];
+  }
+  return {"", ""};
 }
