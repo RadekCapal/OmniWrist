@@ -1,6 +1,8 @@
 #include "BME280Card.h"
 #include "BacklightManager.h"
 #include "ClockCard.h"
+#include "CompassCard.h"
+#include "CompassManager.h"
 #include "DisplayManager.h"
 #include "EncoderManager.h"
 #include "HeartRateCard.h"
@@ -26,9 +28,11 @@ BME280Card bmeCard;
 HeartRateCard heartCard;
 PedometerCard stepCard;
 NotificationCard notifCard;
+CompassCard compassCard;
 
-UI_Card *cards[] = {&clockCard, &bmeCard, &heartCard, &stepCard, &notifCard};
-const int NUM_CARDS = 5;
+UI_Card *cards[] = {&clockCard, &bmeCard,   &heartCard,
+                    &stepCard,  &notifCard, &compassCard};
+const int NUM_CARDS = 6;
 int currentCardIndex = 0;
 
 // variables for power management
@@ -67,6 +71,7 @@ void setup() {
   encoder.begin();
   heartCard.begin();
   backlight.begin();
+  compassManager.begin();
 
   Serial.println("==================================");
   Serial.println("Starting OmniWrist OS...");
@@ -167,6 +172,7 @@ void loop() {
   // 2. process ui only if screen is active
   if (display.isScreenAwake()) {
     motion.update();
+    compassManager.update();
     backlight.update();
 
     Gesture touchAction = display.getGesture();
