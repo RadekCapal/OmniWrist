@@ -3,38 +3,40 @@
 volatile int encoderCount = 0;
 volatile bool buttonPressed = false;
 
-// for debouncing
-uint32_t lastEncoderTime = 0;
+// Only needed for the button now
 uint32_t lastButtonTime = 0;
 
 void IRAM_ATTR encoderISR() {
+  static uint32_t lastInterruptTime = 0;
   uint32_t now = millis();
-  // filtration of noise
-  if (now - lastEncoderTime > 50) {
-    int dtValue = digitalRead(ENC_DT);
-    if (dtValue == HIGH) {
-      encoderCount++; // by direction (right)
-    } else {
-      encoderCount--; // against the direction (left)
+
+  if (now - lastInterruptTime > 100) {
+    if (digitalRead(ENC_CLK) == LOW) {
+      if (digitalRead(ENC_DT) == HIGH) {
+        encoderCount++; // right
+      } else {
+        encoderCount--; // left
+      }
     }
-    lastEncoderTime = now;
+    lastInterruptTime = now;
   }
 }
 
 void IRAM_ATTR encoderButtonISR() {
   uint32_t now = millis();
-  if (now - lastButtonTime > 250) { // double click protection
+  // double click
+  if (now - lastButtonTime > 200) {
     buttonPressed = true;
     lastButtonTime = now;
   }
 }
 
 void EncoderManager::begin() {
-  pinMode(ENC_CLK, INPUT_PULLUP);
-  pinMode(ENC_DT, INPUT_PULLUP);
-  pinMode(ENC_SW, INPUT_PULLUP);
+  // External 10k resistors provide a much stronger pull-up
+  pinMode(ENC_CLK, INPUT);
+  pinMode(ENC_DT, INPUT);
+  pinMode(ENC_SW, INPUT);
 
-  // connect interrupts
   attachInterrupt(ENC_CLK, encoderISR, FALLING);
   attachInterrupt(ENC_SW, encoderButtonISR, FALLING);
 }
@@ -45,8 +47,9 @@ EncoderEvent EncoderManager::getEvent() {
     return EncoderEvent::CLICK;
   }
 
+  // Process the accumulated counts smoothly
   if (encoderCount > 0) {
-    encoderCount--; //
+    encoderCount--;
     return EncoderEvent::RIGHT;
   }
 
